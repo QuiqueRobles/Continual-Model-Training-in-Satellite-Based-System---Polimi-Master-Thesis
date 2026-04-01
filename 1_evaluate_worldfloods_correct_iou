@@ -1,0 +1,254 @@
+# =============================================================
+# STEP 18 - Correct Evaluation with 2-channel Ground Truth
+# Objective: Properly read the ground truth from WorldFloodsv2
+# which has TWO separate channels:
+#   Channel 1 (band 1): Clouds  → {0:invalid, 1:clear, 2:cloud}
+#   Channel 2 (band 2): Water   → {0:invalid, 1:land,   2:water}
+#
+# We correct the evaluation from all previous steps and
+# recalculate the Water IoU using the correct channel.
+# We also visualize both channels of the ground truth.
+# =============================================================
+
+import torch
+import numpy as np
+import rasterio
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from huggingface_hub import hf_hub_download, list_repo_files
+from ml4floods.models.architectures.unets import UNet
+from ml4floods.preprocess.worldfloods.normalize import get_normalisation
+from ml4floods.data.worldfloods.configs import CHANNELS_CONFIGURATIONS
+
+# --- 1. First, check the structure of the ground truth with one image ---
+gt_path = hf_hub_download(
+    repo_id="isp-uv-es/WorldFloodsv2",
+    filename="test/gt/EMSR347_07ZOMBA_DEL_MONIT01_v1.tif",
+    repo_type="dataset"
+)
+
+with rasterio.open(gt_path) as src:
+    print(f"Number of bands in GT: {src.count}")
+    print(f"Band descriptions: {src.descriptions}")
+    gt_channel1 = src.read(1)  # clouds
+    gt_channel2 = src.read(2)  # water
+    print(f"\nChannel 1 (Clouds) - unique classes: {np.unique(gt_channel1)}")
+    print(f"Channel 2 (Water)  - unique classes: {np.unique(gt_channel2)}")
+    print(f"  0=invalid, 1=land, 2=water")
+
+# --- 2. Load the model ---
+model_path = hf_hub_download(
+    repo_id="isp-uv-es/ml4floods",
+    filename="models/WF2_unetv2_bgriswirs/model.pt"
+)
+
+weights = torch.load(model_path, map_location="cpu", weights_only=False)
+model = UNet(n_channels=6, n_class=2)
+model.load_state_dict({k.replace("network.", ""): v for k, v in weights.items()})
+model.eval()
+
+# --- 3. Parameters ---
+indices = CHANNELS_CONFIGURATIONS["bgriswirs"]
+mean, std = get_normalisation("bgriswirs", channels_first=True)
+TILE_SIZE = 256
+
+
+def find_best_tile(image_norm, gt_water, tile_size=256):
+    """Find the best tile with sufficient water coverage and variance"""
+    H, W = image_norm.shape[1], image_norm.shape[2]
+    best_score = -1
+    best_tile_img = best_tile_gt = best_pos = None
+
+    for y in range(0, H - tile_size, tile_size):
+        for x in range(0, W - tile_size, tile_size):
+            tile = image_norm[:, y:y + tile_size, x:x + tile_size]
+            gt_tile = gt_water[y:y + tile_size, x:x + tile_size]
+
+            # Only consider tiles with enough valid pixels
+            valid_pixels = gt_tile != 0
+            if valid_pixels.sum() < tile_size * tile_size * 0.3:
+                continue
+
+            pct_water = np.sum(gt_tile == 2) / valid_pixels.sum() if valid_pixels.sum() > 0 else 0
+            variance = np.var(tile)
+            max_val = np.percentile(tile, 95)
+
+            score = variance * pct_water - max_val * 0.1
+
+            if score > best_score and pct_water > 0.05:
+                best_score = score
+                best_tile_img = tile
+                best_tile_gt = gt_tile
+                best_pos = (y, x)
+
+    return best_tile_img, best_tile_gt, best_pos
+
+
+def inference_multioutput(model, tile_img):
+    """Run inference and return a map with 0=land, 1=water, 2=cloud"""
+    tensor = torch.tensor(tile_img).unsqueeze(0)
+    with torch.no_grad():
+        logits = model(tensor)
+        probs = torch.sigmoid(logits).squeeze()
+
+    prediction_map = np.zeros(probs[0].shape, dtype=np.int32)
+    prediction_map[probs[1].numpy() > 0.5] = 1  # water
+    prediction_map[probs[0].numpy() > 0.5] = 2  # cloud
+
+    return prediction_map
+
+
+def calculate_water_iou(prediction_map, gt_water_channel):
+    """
+    Calculate IoU for water class.
+    
+    gt_water_channel: channel 2 of GT → {0:invalid, 1:land, 2:water}
+    prediction_map:   our prediction → {0:land, 1:water, 2:cloud}
+    
+    We only evaluate valid pixels (gt != 0) and non-cloudy pixels (pred != 2)
+    """
+    valid = gt_water_channel != 0
+    gt_water = (gt_water_channel == 2) & valid
+    pred_water = (prediction_map == 1) & valid
+
+    intersection = np.sum(pred_water & gt_water)
+    union = np.sum(pred_water | gt_water)
+
+    return intersection / union if union > 0 else 0.0
+
+
+# --- 4. Evaluate all test images ---
+files = list(list_repo_files(
+    repo_id="isp-uv-es/WorldFloodsv2", repo_type="dataset"
+))
+test_s2 = sorted([f for f in files if f.startswith("test/S2/")])
+
+results = []
+images_for_plot = []
+
+print(f"\n{'Image':<45} {'% Water GT':>12} {'% Cloud Pred':>13} {'Water IoU':>10}")
+print("-" * 85)
+
+for s2_path in test_s2:
+    name = s2_path.replace("test/S2/", "").replace(".tif", "")
+    gt_path = s2_path.replace("test/S2/", "test/gt/")
+
+    try:
+        img_path = hf_hub_download(
+            repo_id="isp-uv-es/WorldFloodsv2",
+            filename=s2_path, repo_type="dataset"
+        )
+        gt_path_i = hf_hub_download(
+            repo_id="isp-uv-es/WorldFloodsv2",
+            filename=gt_path, repo_type="dataset"
+        )
+
+        with rasterio.open(img_path) as src:
+            image_full = src.read().astype(np.float32)
+
+        with rasterio.open(gt_path_i) as src:
+            gt_clouds = src.read(1)   # channel 1: clouds
+            gt_water = src.read(2)    # channel 2: water ← CORRECT
+
+        # Select the 6 bands used by the model and normalize
+        image_6b = image_full[indices, :, :]
+        image_norm = (image_6b - mean) / std
+
+        # Find best tile
+        tile_img, tile_gt_water, pos = find_best_tile(image_norm, gt_water)
+        if tile_img is None:
+            print(f"{name:<45} No valid tile found")
+            continue
+
+        # Inference
+        prediction = inference_multioutput(model, tile_img)
+        iou = calculate_water_iou(prediction, tile_gt_water)
+
+        valid = tile_gt_water != 0
+        pct_water_gt = np.sum(tile_gt_water == 2) / valid.sum() * 100 if valid.sum() > 0 else 0
+        pct_cloud_pred = np.sum(prediction == 2) / prediction.size * 100
+
+        print(f"{name:<45} {pct_water_gt:>10.1f}% {pct_cloud_pred:>12.1f}% {iou:>10.3f}")
+
+        results.append({
+            "name": name,
+            "iou": iou,
+            "pct_water": pct_water_gt,
+            "pct_cloud": pct_cloud_pred
+        })
+
+        # Save some images for visualization
+        if len(images_for_plot) < 6:
+            rgb = np.stack([tile_img[2], tile_img[1], tile_img[0]], axis=-1)
+            rgb = np.clip(rgb / 3 + 0.5, 0, 1)
+            images_for_plot.append({
+                "name": name,
+                "rgb": rgb,
+                "gt": tile_gt_water,
+                "pred": prediction,
+                "iou": iou
+            })
+
+    except Exception as e:
+        print(f"{name:<45} ERROR: {e}")
+
+
+# --- 5. Global Summary ---
+if results:
+    ious = [r["iou"] for r in results]
+    print("\n" + "=" * 85)
+    print(f"GLOBAL SUMMARY ({len(ious)} images)")
+    print(f"  Mean Water IoU:    {np.mean(ious):.3f}")
+    print(f"  Median Water IoU:  {np.median(ious):.3f}")
+    print(f"  Min Water IoU:     {np.min(ious):.3f}  ({results[np.argmin(ious)]['name']})")
+    print(f"  Max Water IoU:     {np.max(ious):.3f}  ({results[np.argmax(ious)]['name']})")
+
+
+# --- 6. Visualization ---
+COLORS_PRED = np.array([[0.15, 0.15, 0.15], [0.0, 0.4, 0.8], [1.0, 1.0, 1.0]])
+COLORS_GT   = np.array([[0.5, 0.5, 0.5], [0.15, 0.15, 0.15], [0.0, 0.2, 0.8]])
+
+
+def apply_colors(map_array, color_table):
+    """Convert class map to RGB using color table"""
+    rgb = np.zeros((*map_array.shape, 3))
+    for i, color in enumerate(color_table):
+        rgb[map_array == i] = color
+    return rgb
+
+
+n = len(images_for_plot)
+fig, axes = plt.subplots(n, 3, figsize=(15, 5 * n))
+
+for i, data in enumerate(images_for_plot):
+    # RGB Image
+    axes[i, 0].imshow(data["rgb"])
+    axes[i, 0].set_title(f"{data['name'][:35]}\nSentinel-2 RGB")
+    axes[i, 0].axis("off")
+
+    # Ground Truth (Water channel)
+    axes[i, 1].imshow(apply_colors(data["gt"], COLORS_GT))
+    axes[i, 1].set_title("Ground Truth - Water Channel\n(grey=invalid, black=land, blue=water)")
+    axes[i, 1].axis("off")
+
+    # Prediction
+    axes[i, 2].imshow(apply_colors(data["pred"], COLORS_PRED))
+    axes[i, 2].set_title(f"Prediction — Water IoU: {data['iou']:.3f}")
+    axes[i, 2].axis("off")
+
+
+# Legend
+legend_elements = [
+    mpatches.Patch(color=[0.15, 0.15, 0.15], label="Land"),
+    mpatches.Patch(color=[0.0, 0.4, 0.8],    label="Water"),
+    mpatches.Patch(color=[1.0, 1.0, 1.0],    label="Cloud"),
+]
+
+fig.legend(handles=legend_elements, loc="lower center", ncol=3,
+           fontsize=10, bbox_to_anchor=(0.5, 0.01))
+
+plt.tight_layout(rect=[0, 0.03, 1, 1])
+plt.savefig("correct_evaluation.png", dpi=120, bbox_inches="tight")
+plt.show()
+
+print("\nPlot saved as: correct_evaluation.png")
