@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WorldFloods v2 - Water Detection Evaluation</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap');
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            line-height: 1.7;
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(180deg, #f8fafc, #e0f0ff);
+            color: #1e2937;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 40px auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.15);
+            overflow: hidden;
+        }
+
+        header {
+            background: linear-gradient(90deg, #0066ff, #00aaff);
+            color: white;
+            padding: 60px 40px;
+            text-align: center;
+        }
+
+        h1 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 2.8rem;
+            margin: 0 0 12px 0;
+        }
+
+        .subtitle {
+            font-size: 1.35rem;
+            opacity: 0.95;
+        }
+
+        .section {
+            padding: 50px 60px;
+        }
+
+        h2 {
+            color: #0066ff;
+            font-size: 2rem;
+            margin-top: 0;
+            border-bottom: 3px solid #e0f0ff;
+            padding-bottom: 12px;
+        }
+
+        .card {
+            background: #f8fafc;
+            border-radius: 16px;
+            padding: 28px;
+            margin: 25px 0;
+            border-left: 6px solid #0066ff;
+        }
+
+        pre {
+            background: #1e2937;
+            color: #e0f2fe;
+            padding: 20px;
+            border-radius: 12px;
+            overflow-x: auto;
+            font-size: 0.95rem;
+        }
+
+        .function {
+            margin: 35px 0;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        .function-header {
+            background: #0066ff;
+            color: white;
+            padding: 16px 24px;
+            font-weight: 600;
+            font-size: 1.15rem;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        ul {
+            line-height: 2;
+        }
+
+        .highlight {
+            background: #fef3c7;
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-weight: 500;
+        }
+
+        .deep-detail {
+            background: #f0f9ff;
+            border-left: 5px solid #0066ff;
+            padding: 20px;
+            margin: 15px 0;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+
+        <header>
+            <h1>WorldFloods v2</h1>
+            <p class="subtitle">Flood Detection Model Evaluation Script</p>
+            <p style="margin-top: 25px; max-width: 800px; margin-left: auto; margin-right: auto;">
+                This is the main evaluation script that measures how well our neural network detects water from
+                Sentinel-2 satellite images.
+            </p>
+        </header>
+
+        <div class="section">
+
+            <!-- General Goal -->
+            <h2>🎯 What is the Goal of This Script?</h2>
+            <div class="card">
+                The purpose of this script is to <strong>evaluate a deep learning model</strong> designed to detect
+                floods (specifically water bodies) in Sentinel-2 satellite imagery.<br><br>
+                It processes test images from the <strong>WorldFloods v2</strong> dataset, runs the model on selected
+                tiles, compares the predictions against the official ground truth, and calculates the
+                <strong>Intersection over Union (IoU)</strong> for the water class. Finally, it generates a visual
+                report with RGB images, ground truth, and model predictions.
+            </div>
+
+            <!-- ==================== EXPANDED MODEL SECTION ==================== -->
+            <h2>🧠 The Model We Are Using</h2>
+            <div class="card">
+                <p><strong>Model Name:</strong> WF2_unetv2_bgriswirs (UNet variant trained on WorldFloods v2)</p>
+                <p><strong>Architecture:</strong> UNet (Encoder-Decoder with skip connections)</p>
+            
+                <div style="margin: 25px 0; padding: 20px; background: #f0f9ff; border-radius: 12px;">
+                    <strong>Why UNet?</strong><br>
+                    UNet is one of the most popular architectures for semantic segmentation tasks, especially in medical imaging and
+                    remote sensing.
+                    It consists of a contracting path (encoder) that captures context and a symmetric expanding path (decoder) that
+                    enables precise localization.
+                    Skip connections between encoder and decoder help preserve fine spatial details — very important when detecting
+                    thin rivers or small flooded areas.
+                </div>
+            
+                <h3 style="margin-top: 30px; color: #0066ff;">Key Technical Specifications</h3>
+            
+                <ul>
+                    <li><strong>Input Channels:</strong> 6 spectral bands from Sentinel-2 satellite</li>
+                    <li><strong>Output Channels:</strong> 2 independent heads (multi-output design)</li>
+                    <li><strong>Input Tile Size:</strong> 256 × 256 pixels</li>
+                    <li><strong>Output Resolution:</strong> Same as input (256 × 256)</li>
+                    <li><strong>Framework:</strong> PyTorch + custom ml4floods UNet implementation</li>
+                </ul>
+            
+                <h4 style="margin: 25px 0 10px 0;">Input Bands (bgriswirs configuration)</h4>
+                <p>The model was trained using 6 carefully selected Sentinel-2 bands:</p>
+                <table style="width:100%; border-collapse: collapse; margin: 15px 0;">
+                    <tr style="background:#e0f0ff;">
+                        <th style="padding:10px; text-align:left; border:1px solid #94a3b8;">Band</th>
+                        <th style="padding:10px; text-align:left; border:1px solid #94a3b8;">Name</th>
+                        <th style="padding:10px; text-align:left; border:1px solid #94a3b8;">Wavelength</th>
+                        <th style="padding:10px; text-align:left; border:1px solid #94a3b8;">Why it helps</th>
+                    </tr>
+                    <tr>
+                        <td style="padding:10px; border:1px solid #94a3b8;">B2</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">Blue</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">~490 nm</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">Good for water penetration</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:10px; border:1px solid #94a3b8;">B3</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">Green</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">~560 nm</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">Vegetation and water contrast</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:10px; border:1px solid #94a3b8;">B4</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">Red</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">~665 nm</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">Strong water absorption</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:10px; border:1px solid #94a3b8;">B8</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">NIR (Near Infrared)</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">~842 nm</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">Excellent for land-water separation</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:10px; border:1px solid #94a3b8;">B11</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">SWIR 1</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">~1610 nm</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">Sensitive to moisture content</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:10px; border:1px solid #94a3b8;">B12</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">SWIR 2</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">~2190 nm</td>
+                        <td style="padding:10px; border:1px solid #94a3b8;">Strong cloud and water discrimination</td>
+                    </tr>
+                </table>
+            
+                <h4 style="margin: 30px 0 10px 0;">Output Design – Why 2 Channels?</h4>
+                <div style="background:#ecfdf5; padding:20px; border-radius:12px;">
+                    <p>The model produces <strong>two independent probability maps</strong> instead of a single multi-class output:
+                    </p>
+                    <ul>
+                        <li><strong>Channel 0:</strong> Cloud probability (sigmoid applied)</li>
+                        <li><strong>Channel 1:</strong> Water probability (sigmoid applied)</li>
+                    </ul>
+                    <p><strong>Advantages of this multi-output approach:</strong></p>
+                    <ul>
+                        <li>Allows the model to detect clouds and water <strong>simultaneously</strong> (a pixel can theoretically
+                            have high probability for both)</li>
+                        <li>Clouds can be flagged even if water is also predicted underneath (important for cloudy flood scenes)
+                        </li>
+                        <li>During post-processing, we give priority to clouds: if cloud prob > 0.5, the pixel becomes class 2
+                            (cloud), even if water probability is also high.</li>
+                    </ul>
+                </div>
+            
+                <h4 style="margin: 25px 0 10px 0;">Training &amp; Preprocessing Details</h4>
+                <ul>
+                    <li><strong>Normalization:</strong> The 6 bands are normalized using dataset-specific mean and standard
+                        deviation values (<code>get_normalisation("bgriswirs")</code>). This is crucial because Sentinel-2
+                        reflectance values have very different ranges.</li>
+                    <li><strong>Pre-trained weights:</strong> Loaded from Hugging Face repository <code>isp-uv-es/ml4floods</code> →
+                        file <code>models/WF2_unetv2_bgriswirs/model.pt</code></li>
+                    <li><strong>Model state dict cleaning:</strong> The code removes the <code>"network."</code> prefix from the
+                        saved weights to match the current UNet architecture.</li>
+                    <li><strong>Evaluation mode:</strong> <code>model.eval()</code> is called so that batch normalization and
+                        dropout layers behave correctly during inference.</li>
+                </ul>
+            
+                <h4 style="margin: 25px 0 10px 0;">Post-processing in Inference</h4>
+                <p>After the model runs:</p>
+                <ol>
+                    <li>Raw logits → Sigmoid → probabilities between 0 and 1 for each channel</li>
+                    <li>Start with all pixels as class <strong>0 (Land)</strong></li>
+                    <li>If water probability &gt; 0.5 → assign class <strong>1 (Water)</strong></li>
+                    <li>If cloud probability &gt; 0.5 → assign class <strong>2 (Cloud)</strong> (overrides water if both are true)
+                    </li>
+                </ol>
+                <p>This results in a clean 256×256 integer map ready for IoU calculation and visualization.</p>
+            
+                <p style="margin-top: 25px; font-size: 0.95rem; color: #475569;">
+                    <strong>Note:</strong> The model was specifically trained on the WorldFloods v2 dataset using the "bgriswirs"
+                    band combination, which explains why we select exactly those 6 bands and apply the matching normalization.
+                </p>
+            </div>
+
+            <!-- Functions -->
+            <h2>🔧 Functions in the Code</h2>
+
+            <div class="function">
+                <div class="function-header">
+                    <span>🔍</span> find_best_tile(image_norm, gt_water)
+                </div>
+                <div style="padding: 25px;">
+                    <p><strong>What it does:</strong></p>
+                    <p>Scans a large Sentinel-2 image and selects the best 256×256 tile for evaluation.</p>
+                    <p>It prefers tiles that:</p>
+                    <ul>
+                        <li>Have at least 30% valid ground-truth pixels</li>
+                        <li>Contain a reasonable amount of water (&gt; 5%)</li>
+                        <li>Have high variance (rich visual information)</li>
+                    </ul>
+                    <p>Returns the normalized image tile, the corresponding water ground truth, and its position in the
+                        original image.</p>
+                </div>
+            </div>
+
+            <!-- DEEP INFERENCE SECTION (expanded as requested) -->
+            <div class="function">
+                <div class="function-header">
+                    <span>🧠</span> inference_multioutput(model, tile_img)
+                </div>
+                <div style="padding: 30px;">
+                    <p><strong>What it does:</strong></p>
+                    <p>This is the core inference function. It takes a normalized 256×256×6 tile and runs it through the
+                        UNet model to produce a pixel-wise prediction map with three possible classes: Land (0), Water
+                        (1), or Cloud (2).</p>
+
+                    <div class="deep-detail">
+                        <strong>Step-by-step breakdown of the inference process:</strong>
+                        <ol>
+                            <li><strong>Tensor preparation</strong><br>
+                                The input <code>tile_img</code> (a NumPy array of shape <code>[6, 256, 256]</code>) is
+                                converted into a PyTorch tensor and a batch dimension is added with
+                                <code>.unsqueeze(0)</code>, resulting in shape <code>[1, 6, 256, 256]</code>.
+                            </li>
+                            <li><strong>Forward pass with torch.no_grad()</strong><br>
+                                The model is executed inside a <code>with torch.no_grad():</code> context. This disables
+                                gradient tracking, which makes inference faster and uses less memory (no need to store
+                                computation graphs).
+                            </li>
+                            <li><strong>Model output (logits)</strong><br>
+                                The UNet returns raw <strong>logits</strong> of shape <code>[1, 2, 256, 256]</code>:<br>
+                                • Channel 0 = raw scores for clouds<br>
+                                • Channel 1 = raw scores for water<br>
+                                These values can be any real number (positive or negative).
+                            </li>
+                            <li><strong>Sigmoid activation</strong><br>
+                                <code>torch.sigmoid(logits)</code> is applied independently to each channel. This
+                                converts the raw logits into probabilities between 0 and 1 for each class separately.
+                                Because the model was trained with two independent output heads, both a pixel can have
+                                high probability for water <strong>and</strong> cloud at the same time.
+                            </li>
+                            <li><strong>Creating the final class map</strong><br>
+                                A zero-initialized integer array (<code>np.zeros(..., dtype=np.int32)</code>) is created
+                                — this defaults every pixel to class <strong>0 (Land)</strong>.<br><br>
+                                Then two masking operations are performed <strong>in order</strong>:
+                                <pre>prediction_map[probs[1] > 0.5] = 1   # Water (if water probability &gt; 50%)
+prediction_map[probs[0] > 0.5] = 2   # Cloud (if cloud probability &gt; 50%)</pre>
+                                <strong>Important:</strong> The cloud assignment happens <em>after</em> water. This
+                                means if a pixel has high probability for <strong>both</strong> water and cloud, it will
+                                be classified as <strong>Cloud (2)</strong> — cloud takes priority in this
+                                implementation.
+                            </li>
+                            <li><strong>Final output</strong><br>
+                                A clean 256×256 integer array where each pixel is exactly 0, 1, or 2.
+                            </li>
+                        </ol>
+                    </div>
+
+                    <p><strong>Why this design?</strong></p>
+                    <ul>
+                        <li>Using two separate sigmoid outputs allows the model to detect clouds and water independently
+                            (multi-label style).</li>
+                        <li>Thresholding at exactly 0.5 is a standard and simple decision boundary for binary
+                            classification per channel.</li>
+                        <li>The function is kept very lightweight so it can be called thousands of times during
+                            evaluation without slowing down.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="function">
+                <div class="function-header">
+                    <span>📏</span> calculate_water_iou(prediction_map, gt_water_channel)
+                </div>
+                <div style="padding: 25px;">
+                    <p><strong>What it does:</strong></p>
+                    <p>Calculates the Intersection over Union (IoU) specifically for the water class.</p>
+                    <p>It only considers:</p>
+                    <ul>
+                        <li>Valid pixels in the ground truth (value ≠ 0)</li>
+                        <li>Pixels that the model did not classify as clouds</li>
+                    </ul>
+                    <p>This gives a reliable metric of how well the model detects water.</p>
+                </div>
+            </div>
+
+            <div class="function">
+                <div class="function-header">
+                    <span>🎨</span> apply_colors(map_array, color_table)
+                </div>
+                <div style="padding: 25px;">
+                    <p><strong>What it does:</strong></p>
+                    <p>Converts a class map (with values 0, 1, 2) into an RGB image for visualization.</p>
+                    <p>Used to display both the ground truth water mask and the model’s prediction in nice colors.</p>
+                </div>
+            </div>
+
+            <!-- Workflow -->
+            <h2>🔄 Overall Workflow</h2>
+            <div class="card">
+                <ol style="font-size: 1.1rem;">
+                    <li><strong>Setup &amp; Loading</strong><br>
+                        Download and inspect a sample ground-truth image to understand its 2-channel structure (clouds
+                        in band 1, water in band 2).<br>
+                        Load the pre-trained UNet model and prepare normalization parameters.
+                    </li>
+                    <br>
+                    <li><strong>Process Test Images</strong><br>
+                        Loop through all Sentinel-2 images in the test folder of the WorldFloods v2 dataset.
+                    </li>
+                    <br>
+                    <li><strong>For each image:</strong>
+                        <ul>
+                            <li>Load the Sentinel-2 image (6 selected bands) and its corresponding 2-channel ground
+                                truth</li>
+                            <li>Normalize the image using dataset-specific mean and std</li>
+                            <li>Find the best 256×256 tile using <code>find_best_tile()</code></li>
+                            <li>Run model inference using <code>inference_multioutput()</code></li>
+                            <li>Calculate Water IoU using <code>calculate_water_iou()</code></li>
+                            <li>Store results and save selected tiles for visualization</li>
+                        </ul>
+                    </li>
+                    <br>
+                    <li><strong>Generate Report</strong><br>
+                        Print a summary table with % water in GT, % clouds predicted, and IoU for each image.<br>
+                        Show global statistics (mean, median, min, and max IoU).<br>
+                        Create a multi-panel visualization plot and save it as <strong>correct_evaluation.png</strong>.
+                    </li>
+                </ol>
+            </div>
+
+            <h2>📊 Final Output</h2>
+            <div class="card">
+                When you run this script, you will obtain:
+                <ul>
+                    <li>A clear table in the console showing performance per image</li>
+                    <li>Overall statistics of the model’s water detection capability</li>
+                    <li>A visual report (PNG file) displaying Sentinel-2 RGB, Ground Truth water mask, and Model
+                        Prediction side by side</li>
+                </ul>
+            </div>
+
+            <p style="text-align: center; margin-top: 50px; font-size: 1.15rem;">
+                📁 Save this file as: <strong>worldfloods_evaluation_explained.html</strong>
+            </p>
+
+        </div>
+    </div>
+</body>
+
+</html>

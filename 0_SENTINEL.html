@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sentinel-2 Explained • For Flood Detection (WorldFloods v2 Project)</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap');
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            line-height: 1.7;
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(180deg, #f8fafc, #e0f0ff);
+            color: #1e2937;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 40px auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.15);
+            overflow: hidden;
+        }
+
+        header {
+            background: linear-gradient(90deg, #0066ff, #00aaff);
+            color: white;
+            padding: 60px 40px;
+            text-align: center;
+        }
+
+        h1 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 2.8rem;
+            margin: 0 0 12px 0;
+        }
+
+        .subtitle {
+            font-size: 1.35rem;
+            opacity: 0.95;
+        }
+
+        .section {
+            padding: 50px 60px;
+        }
+
+        h2 {
+            color: #0066ff;
+            font-size: 2rem;
+            margin-top: 0;
+            border-bottom: 3px solid #e0f0ff;
+            padding-bottom: 12px;
+        }
+
+        .card {
+            background: #f8fafc;
+            border-radius: 16px;
+            padding: 28px;
+            margin: 25px 0;
+            border-left: 6px solid #0066ff;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        th,
+        td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        th {
+            background: #e0f0ff;
+            font-weight: 600;
+        }
+
+        .band-row {
+            background: #f8fafc;
+        }
+
+        .highlight {
+            background: #fef3c7;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+
+        .myriad-box {
+            background: #ecfdf5;
+            border: 2px solid #10b981;
+            border-radius: 16px;
+            padding: 25px;
+            margin: 30px 0;
+        }
+
+        .source {
+            font-size: 0.9rem;
+            color: #64748b;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 20px;
+            margin-top: 40px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+
+        <header>
+            <h1>Sentinel-2</h1>
+            <p class="subtitle">How the Satellite Works for Flood Detection</p>
+            <p style="margin-top: 20px; max-width: 800px; margin-left: auto; margin-right: auto;">
+                Everything you need to know about Sentinel-2 for this WorldFloods v2 project — focused on the 6 spectral
+                bands used by our UNet model, plus the Myriad hardware used in onboard AI applications.
+            </p>
+        </header>
+
+        <div class="section">
+
+            <!-- What is Sentinel-2 -->
+            <h2>🌍 What is Sentinel-2?</h2>
+            <div class="card">
+                Sentinel-2 is part of the European Copernicus Programme, operated by the <strong>European Space Agency
+                    (ESA)</strong>. It consists of a constellation of satellites that provide high-resolution optical
+                imagery of the Earth’s land and coastal areas.<br><br>
+                The mission is designed for <strong>operational monitoring</strong> of agriculture, forests, land-use
+                change, coastal zones, and — crucially for this project — <strong>flood events and surface water
+                    mapping</strong>.
+            </div>
+
+            <!-- Mission Specifications -->
+            <h2>📡 Mission Specifications (Relevant for Our Project)</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Satellites:</strong> Sentinel-2A (launched 2015), Sentinel-2B (2017), and Sentinel-2C
+                        (operational since 2024)</li>
+                    <li><strong>Revisit time:</strong> 5 days at the equator (with two satellites), even faster at
+                        higher latitudes</li>
+                    <li><strong>Swath width:</strong> 290 km — allows wide-area coverage in a single pass</li>
+                    <li><strong>Data products used in WorldFloods v2:</strong> <strong>Level-1C</strong>
+                        (Top-of-Atmosphere reflectance) — the exact product our model was trained on</li>
+                </ul>
+                <p><strong>Why this matters for flood mapping:</strong> The frequent revisit time means we can capture
+                    flood events quickly, even if clouds are present in some images.</p>
+            </div>
+
+            <!-- The MSI Instrument -->
+            <h2>🔬 The Multispectral Instrument (MSI)</h2>
+            <div class="card">
+                Each Sentinel-2 satellite carries the <strong>Multispectral Instrument (MSI)</strong>, which captures
+                reflected sunlight in <strong>13 spectral bands</strong> ranging from visible to shortwave
+                infrared.<br><br>
+                The bands have three different spatial resolutions:
+                <ul>
+                    <li>4 bands at <strong>10 m</strong></li>
+                    <li>6 bands at <strong>20 m</strong></li>
+                    <li>3 bands at <strong>60 m</strong></li>
+                </ul>
+                In our project, the model works with tiles of 256×256 pixels at 10 m resolution (after resampling the 20
+                m bands).
+            </div>
+
+            <!-- The 6 Bands We Use -->
+            <h2>🎯 The 6 Bands Used in This Project (“bgriswirs” configuration)</h2>
+            <div class="card">
+                <p>Our UNet model was trained on exactly these six bands:</p>
+                <table>
+                    <tr>
+                        <th>Band</th>
+                        <th>Name</th>
+                        <th>Central Wavelength</th>
+                        <th>Bandwidth</th>
+                        <th>Native Resolution</th>
+                        <th>Why it’s useful for flood / water detection</th>
+                    </tr>
+                    <tr class="band-row">
+                        <td><strong>B2</strong></td>
+                        <td>Blue</td>
+                        <td>492–493 nm</td>
+                        <td>65 nm</td>
+                        <td>10 m</td>
+                        <td>Good water penetration; helps distinguish clear vs. turbid water and provides true-color
+                            context.</td>
+                    </tr>
+                    <tr class="band-row">
+                        <td><strong>B3</strong></td>
+                        <td>Green</td>
+                        <td>559–560 nm</td>
+                        <td>35–36 nm</td>
+                        <td>10 m</td>
+                        <td>Excellent contrast between clear and muddy water; used in NDWI water index.</td>
+                    </tr>
+                    <tr class="band-row">
+                        <td><strong>B4</strong></td>
+                        <td>Red</td>
+                        <td>664–665 nm</td>
+                        <td>30–31 nm</td>
+                        <td>10 m</td>
+                        <td>Strong absorption by water; high contrast with vegetation and land.</td>
+                    </tr>
+                    <tr class="band-row">
+                        <td><strong>B8</strong></td>
+                        <td>Near Infrared (NIR)</td>
+                        <td>832–833 nm</td>
+                        <td>105–106 nm</td>
+                        <td>10 m</td>
+                        <td><strong>Key water detector</strong>: Water absorbs NIR almost completely (very low
+                            reflectance), while land and vegetation reflect it strongly.</td>
+                    </tr>
+                    <tr class="band-row">
+                        <td><strong>B11</strong></td>
+                        <td>Shortwave Infrared 1 (SWIR1)</td>
+                        <td>1610 nm</td>
+                        <td>~90–100 nm</td>
+                        <td>20 m (resampled)</td>
+                        <td>Extremely sensitive to moisture; water appears almost black. Excellent at separating water
+                            from clouds and shadows.</td>
+                    </tr>
+                    <tr class="band-row">
+                        <td><strong>B12</strong></td>
+                        <td>Shortwave Infrared 2 (SWIR2)</td>
+                        <td>2190 nm</td>
+                        <td>~180 nm</td>
+                        <td>20 m (resampled)</td>
+                        <td><strong>Best cloud vs. water discriminator</strong>: Water absorbs very strongly; clouds and
+                            snow reflect more in this region.</td>
+                    </tr>
+                </table>
+                <p><strong>Why these exact 6 bands?</strong> They combine the best visible/NIR water-contrast bands with
+                    the two SWIR bands that dramatically improve cloud masking and water detection accuracy. This
+                    combination is known in the ml4floods library as the <span class="highlight">“bgriswirs”</span>
+                    configuration.</p>
+            </div>
+
+            <!-- How Sentinel-2 Sees Water and Clouds -->
+            <h2>💧 How Sentinel-2 “Sees” Water vs. Clouds vs. Land</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Water:</strong> Very low reflectance in NIR (B8) and especially in SWIR (B11/B12). It
+                        appears dark in these bands.</li>
+                    <li><strong>Land / vegetation:</strong> High reflectance in NIR (B8), moderate in visible bands.
+                    </li>
+                    <li><strong>Clouds:</strong> High reflectance across visible and NIR bands, but different behavior
+                        in SWIR. This is why B11 and B12 are critical for the model to avoid confusing clouds with
+                        water.</li>
+                </ul>
+                <p>Our model learns these spectral signatures directly from the 6-band input, which is why it can output
+                    separate water and cloud probability maps.</p>
+            </div>
+
+            <!-- NEW SECTION: The Myriad Part -->
+            <h2>⚡ The Myriad Part That Uses Sentinel-2 Data (Onboard AI)</h2>
+            <div class="card">
+                <p>The <strong>Intel Movidius Myriad</strong> (specifically Myriad 2 and Myriad X) is a low-power
+                    <strong>Vision Processing Unit (VPU)</strong> designed for efficient computer vision and deep neural
+                    network inference at the edge.</p>
+
+                <div class="myriad-box">
+                    <strong>Key characteristics of the Myriad hardware:</strong>
+                    <ul>
+                        <li>Extremely low power consumption (typically 1–2 Watts)</li>
+                        <li>High performance for CNN inference (hundreds of GOPs to TOPs depending on version)</li>
+                        <li>Optimized for embedded and space-constrained environments</li>
+                        <li>Supports many common deep learning layers used in segmentation models like UNet</li>
+                    </ul>
+                </div>
+
+                <p><strong>How it connects to Sentinel-2:</strong></p>
+                <p>While your current WorldFloods v2 evaluation script runs on the ground using pre-processed Level-1C
+                    Sentinel-2 images, the Myriad VPU enables **onboard processing** directly on the satellite.</p>
+
+                <p>The most famous example is the **Φsat-1** mission (part of the European Space Agency’s Φsat series),
+                    which was the <strong>first satellite to run a convolutional neural network (CNN) in orbit</strong>
+                    for cloud detection. It used the **Myriad 2 VPU** to process multispectral imagery (similar to
+                    Sentinel-2 bands) in real time and discard cloudy images before downlink — dramatically reducing
+                    data volume sent to Earth.</p>
+
+                <p><strong>Relevance to flood detection and your project:</strong></p>
+                <ul>
+                    <li>Future missions could run your UNet-style water detection model directly onboard using a
+                        Myriad-class processor.</li>
+                    <li>This would allow real-time flood mapping, immediate alerts, and smart data selection (e.g., only
+                        downlink clear-water scenes).</li>
+                    <li>The same 6-band “bgriswirs” input your model uses today could be fed into a quantized version of
+                        the network running on the Myriad VPU.</li>
+                    <li>Myriad hardware has been radiation-tested and space-qualified for Low Earth Orbit (LEO), making
+                        it suitable for small satellites and CubeSats.</li>
+                </ul>
+
+                <p><strong>Why Myriad matters for the future of Sentinel-2-like missions:</strong> Traditional
+                    satellites downlink huge amounts of raw or lightly processed data. Onboard AI with Myriad reduces
+                    bandwidth needs, enables faster response times for disasters (like floods), and makes small,
+                    affordable satellites much more capable.</p>
+            </div>
+
+            <!-- Data Level Used -->
+            <h2>📦 Data Level Used in This Project</h2>
+            <div class="card">
+                The WorldFloods v2 dataset (and therefore our model) uses <strong>Sentinel-2 Level-1C</strong>
+                products:<br><br>
+                • Top-of-Atmosphere (TOA) reflectance<br>
+                • Already orthorectified and geometrically corrected<br>
+                • No atmospheric correction applied (Level-2A would be Bottom-of-Atmosphere)<br><br>
+                Using L1C is a deliberate choice in flood mapping because it allows faster processing and the model was
+                trained to handle atmospheric effects implicitly.
+            </div>
+
+            <!-- Summary -->
+            <h2>📌 Why This Matters for Our Project</h2>
+            <div class="card">
+                The combination of <strong>high spatial resolution (10 m)</strong>, <strong>frequent revisit</strong>,
+                and <strong>rich spectral information</strong> (especially the NIR + SWIR bands) makes Sentinel-2 one of
+                the best satellites for operational flood monitoring. Our UNet model was specifically designed around
+                these six bands to maximize water detection accuracy while correctly handling clouds — the two biggest
+                challenges in optical flood mapping.<br><br>
+                The Myriad VPU opens the door to running similar models **onboard**, bringing us closer to real-time,
+                intelligent satellite systems.
+            </div>
+
+            <div class="source">
+                <strong>Sources &amp; Further Reading</strong><br>
+                • ESA Sentinel-2 User Handbook and SentiWiki (MSI Technical Guide)<br>
+                • NASA Earthdata – Sentinel-2 MSI Spectral Bands<br>
+                • Official ESA documentation on Φsat-1 and Myriad 2 space qualification<br>
+                • Intel Movidius Myriad technical specifications<br>
+                • Papers on onboard AI for Sentinel-2-like data (e.g., cloud detection with Myriad on Φsat-1)<br>
+                • WorldFloods v2 dataset and ml4floods library documentation<br><br>
+                All band specifications are taken from official ESA and NASA sources (verified 2025–2026).
+            </div>
+
+        </div>
+    </div>
+</body>
+
+</html>
