@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Step 2 - Embedding Extraction and SVD Compression</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap');
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            line-height: 1.7;
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(180deg, #f8fafc, #e0f0ff);
+            color: #1e2937;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 40px auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.15);
+            overflow: hidden;
+        }
+
+        header {
+            background: linear-gradient(90deg, #1e40af, #3b82f6);
+            color: white;
+            padding: 60px 40px;
+            text-align: center;
+        }
+
+        h1 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 2.8rem;
+            margin: 0 0 12px 0;
+        }
+
+        .subtitle {
+            font-size: 1.35rem;
+            opacity: 0.95;
+        }
+
+        .section {
+            padding: 50px 60px;
+        }
+
+        h2 {
+            color: #1e40af;
+            font-size: 2rem;
+            margin-top: 0;
+            border-bottom: 3px solid #dbeafe;
+            padding-bottom: 12px;
+        }
+
+        .card {
+            background: #f8fafc;
+            border-radius: 16px;
+            padding: 28px;
+            margin: 25px 0;
+            border-left: 6px solid #1e40af;
+        }
+
+        .function {
+            margin: 35px 0;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        .function-header {
+            background: #1e40af;
+            color: white;
+            padding: 16px 24px;
+            font-weight: 600;
+            font-size: 1.15rem;
+        }
+
+        ul,
+        ol {
+            line-height: 2;
+        }
+
+        .highlight {
+            background: #fef3c7;
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-weight: 500;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+
+        <header>
+            <h1>Step 2</h1>
+            <p class="subtitle">Embedding Extraction and SVD Compression</p>
+            <p style="margin-top: 25px; max-width: 800px; margin-left: auto; margin-right: auto;">
+                Core part of the TFM — Simulating satellite onboard processing with embeddings
+            </p>
+        </header>
+
+        <div class="section">
+
+            <!-- Goal -->
+            <h2>🎯 Objective of This Script</h2>
+            <div class="card">
+                This script is the technical core of the project. It simulates a complete <strong>satellite-to-ground
+                    intelligent compression pipeline</strong>:<br><br>
+                <strong>Satellite side (onboard):</strong><br>
+                Raw Sentinel-2 image → Frozen UNet backbone → Extract embedding + skip connections → Compress embedding
+                with SVD → Downlink compressed data<br><br>
+                <strong>Ground side:</strong><br>
+                Receive compressed embedding → Reconstruct full prediction using the decoder<br><br>
+                The goal is to dramatically reduce the amount of data transmitted from the satellite while maintaining
+                high water detection accuracy (measured by IoU).
+            </div>
+
+            <!-- The Model -->
+            <h2>🧠 Model Used</h2>
+            <div class="card">
+                We use the same pre-trained UNet model as in previous steps (<code>WF2_unetv2_bgriswirs</code>).<br><br>
+                <strong>Key idea:</strong> We <strong>freeze the entire model</strong> to simulate the satellite's
+                onboard backbone.
+                Only the encoder (backbone) runs on the satellite. The decoder runs on the ground after receiving the
+                compressed embedding.
+            </div>
+
+            <!-- ==================== DEEP DIVE SECTION ==================== -->
+            <h2>🔬 Deep Dive: Model Freezing + Embeddings Extraction</h2>
+            <div class="card">
+            
+                <h3 style="color:#1e40af; margin-top:0;">1. What Does “Freezing the Model” Mean?</h3>
+                <p>After loading the pre-trained UNet, we execute this code:</p>
+                <pre style="background:#1e2937; color:#e0f2fe; padding:15px; border-radius:8px;">
+            for param in model.parameters():
+                param.requires_grad = False
+            model.eval()</pre>
+            
+                <p><strong>Technical effect:</strong></p>
+                <ul>
+                    <li><code>requires_grad = False</code> → All weights become read-only (no gradients are computed or stored).
+                    </li>
+                    <li><code>model.eval()</code> → Turns off dropout and batch-norm training mode (uses running statistics).</li>
+                </ul>
+                <p><strong>Why we do it:</strong> This perfectly simulates a <strong>satellite onboard computer</strong>. The model
+                    weights are fixed once and for all (no training happens in space). The backbone runs in pure inference mode,
+                    using almost no extra memory or power.</p>
+            
+                <h3 style="color:#1e40af; margin-top:25px;">2. What Are We Extracting? (The Embeddings + Skip Connections)</h3>
+                <p>We register four <strong>forward hooks</strong> on specific layers of the UNet encoder:</p>
+                <pre style="background:#1e2937; color:#e0f2fe; padding:15px; border-radius:8px;">
+            model.dconv_down1.register_forward_hook(...)  # conv1  → [1, 64, 128, 128]
+            model.dconv_down2.register_forward_hook(...)  # conv2  → [1, 128, 64, 64]
+            model.dconv_down3.register_forward_hook(...)  # conv3  → [1, 256, 32, 32]
+            model.dconv_down4.register_forward_hook(...)  # emb    → [1, 512, 16, 16]  ← bottleneck!
+            </pre>
+            
+                <p><strong>What each tensor represents:</strong></p>
+                <table style="width:100%; border-collapse:collapse; margin:15px 0;">
+                    <tr style="background:#dbeafe;">
+                        <th style="padding:10px; text-align:left;">Layer</th>
+                        <th style="padding:10px; text-align:left;">Tensor shape</th>
+                        <th style="padding:10px; text-align:left;">Meaning in UNet</th>
+                        <th style="padding:10px; text-align:left;">Why we keep it</th>
+                    </tr>
+                    <tr>
+                        <td style="padding:10px; border-bottom:1px solid #e2e8f0;">dconv_down1</td>
+                        <td style="padding:10px; border-bottom:1px solid #e2e8f0;">[1, 64, 128, 128]</td>
+                        <td style="padding:10px; border-bottom:1px solid #e2e8f0;">Early low-level features (edges, textures)</td>
+                        <td style="padding:10px; border-bottom:1px solid #e2e8f0;">Skip connection for fine details</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:10px; border-bottom:1px solid #e2e8f0;">dconv_down2</td>
+                        <td style="padding:10px; border-bottom:1px solid #e2e8f0;">[1, 128, 64, 64]</td>
+                        <td style="padding:10px; border-bottom:1px solid #e2e8f0;">Mid-level features</td>
+                        <td style="padding:10px; border-bottom:1px solid #e2e8f0;">Skip connection</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:10px; border-bottom:1px solid #e2e8f0;">dconv_down3</td>
+                        <td style="padding:10px; border-bottom:1px solid #e2e8f0;">[1, 256, 32, 32]</td>
+                        <td style="padding:10px; border-bottom:1px solid #e2e8f0;">High-level semantic features</td>
+                        <td style="padding:10px; border-bottom:1px solid #e2e8f0;">Skip connection</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:10px;">dconv_down4</td>
+                        <td style="padding:10px;">[1, 512, 16, 16]</td>
+                        <td style="padding:10px;">Deepest <strong>embedding</strong> / bottleneck</td>
+                        <td style="padding:10px;"><strong>Most compressed representation</strong> of the entire image</td>
+                    </tr>
+                </table>
+            
+                <div style="background:#ecfdf5; padding:20px; border-radius:12px; margin:20px 0;">
+                    <strong>Key insight:</strong><br>
+                    The <span class="highlight">embedding (emb)</span> is the smallest and most information-dense tensor produced by
+                    the encoder.
+                    It contains everything the decoder needs to reconstruct the final segmentation.
+                    By compressing <strong>only this tensor</strong>, we achieve massive data reduction while still being able to
+                    recover almost the original prediction on the ground.
+                </div>
+            
+                <h3 style="color:#1e40af; margin-top:25px;">3. Why Only Compress the Embedding?</h3>
+                <p>On the satellite we only transmit the compressed <code>emb</code> (the 512-channel 16×16 bottleneck).</p>
+                <p>On the ground we:</p>
+                <ol>
+                    <li>Receive the compressed embedding</li>
+                    <li>Re-use the exact same frozen backbone to re-compute the three skip connections (conv1, conv2, conv3) — they
+                        are identical because the backbone never changes</li>
+                    <li>Feed emb + the three skips into the decoder (exactly as the original UNet does)</li>
+                </ol>
+                <p>This design gives us the best of both worlds: <strong>maximum compression</strong> on the satellite side +
+                    <strong>full decoder quality</strong> on the ground.</p>
+            
+                <h3 style="color:#1e40af; margin-top:25px;">4. Simple Technical Summary of What Happens</h3>
+                <p style="font-size:1.05rem;">
+                    1. Image (6 bands, 256×256) → Frozen encoder → 4 tensors captured<br>
+                    2. Only the deepest embedding [1, 512, 16, 16] is sent through SVD compression<br>
+                    3. Ground receives ~10% of the original embedding size<br>
+                    4. Ground re-computes skips + runs decoder → almost identical water map
+                </p>
+            
+                <p style="margin-top:25px; font-size:0.95rem; color:#475569;">
+                    This is exactly how future “smart satellites” will work: they extract a compact embedding onboard, compress it,
+                    and downlink only what is essential.
+                </p>
+            </div>
+
+            <!-- Main Functions -->
+            <h2>🔧 Key Functions</h2>
+
+            <div class="function">
+                <div class="function-header">find_best_tile()</div>
+                <div style="padding: 25px;">
+                    Selects the best 256×256 tile from the large Sentinel-2 image. It prioritizes tiles that contain
+                    enough water pixels and have good visual variance.
+                </div>
+            </div>
+
+            <div class="function">
+            
+                <div class="function-header">compress_svd(tensor, k_ratio=0.1)</div>
+                <pre
+                    style="background:#1e2937; color:#e0f2fe; padding:18px; border-radius:8px; font-size:0.95rem; overflow-x:auto;">
+            def compress_svd(tensor, k_ratio=0.1):
+                arr = tensor.squeeze(0).numpy()          # shape: [C, H, W]   e.g. [512, 16, 16]
+                C, H, W = arr.shape
+                mat = arr.reshape(C, H*W)                # reshape to matrix [C, H*W]
+            
+                U, S, Vt = np.linalg.svd(mat, full_matrices=False)
+            
+                k = max(1, int(len(S) * k_ratio))       # keep only 10% of singular values
+                Uk  = U[:, :k]
+                Sk  = S[:k]
+                Vtk = Vt[:k, :]
+            
+                recon = (Uk @ np.diag(Sk) @ Vtk).reshape(C, H, W)
+            
+                bytes_orig = arr.nbytes
+                bytes_comp = Uk.nbytes + Sk.nbytes + Vtk.nbytes
+                return torch.tensor(recon).unsqueeze(0).float(), bytes_orig, bytes_comp
+            </pre>
+            
+                <h3 style="color:#1e40af; margin-top:25px;">Step-by-Step: What Happens Inside</h3>
+                <ol style="font-size:1.05rem;">
+                    <li><strong>Input tensor</strong><br>
+                        We receive the deep embedding from the frozen encoder: shape <strong>[1, 512, 16, 16]</strong>.<br>
+                        We remove the batch dimension → <strong>[512, 16, 16]</strong>.
+                    </li>
+                    <li><strong>Reshape into a matrix</strong><br>
+                        We flatten the spatial dimensions: <strong>[512, 16×16] = [512, 256]</strong>.<br>
+                        Now every row is one channel, and every column is one “pixel” in the flattened 16×16 feature map.
+                    </li>
+                    <li><strong>Compute Singular Value Decomposition (SVD)</strong><br>
+                        <code>np.linalg.svd(mat, full_matrices=False)</code> gives us three matrices:<br>
+                        <strong>U</strong> [512 × 256]  <strong>S</strong> [256] (singular values, sorted
+                        descending)  <strong>Vt</strong> [256 × 256]<br><br>
+                        Mathematically the decomposition is exact:<br>
+                        <span style="font-family:monospace; background:#fefce8; padding:2px 6px;">mat = U ⋅ diag(S) ⋅ Vt</span>
+                    </li>
+                    <li><strong>Truncation (the compression step)</strong><br>
+                        We keep only the first <strong>k = 10% of singular values</strong>.<br>
+                        Example: original has 256 singular values → we keep only the top <strong>26</strong> (k_ratio=0.1).<br>
+                        We discard the rest → this removes the least important information while keeping the most dominant patterns.
+                    </li>
+                    <li><strong>Reconstruction</strong><br>
+                        We build the low-rank approximation:<br>
+                        <span style="font-family:monospace; background:#fefce8; padding:2px 6px;">reconstructed = U[:,:k] ⋅
+                            diag(S[:k]) ⋅ Vt[:k,:]</span><br>
+                        Then reshape back to the original spatial shape <strong>[512, 16, 16]</strong>.
+                    </li>
+                    <li><strong>Memory calculation</strong><br>
+                        We compare the number of bytes before and after:<br>
+                        <strong>Original</strong> = 512 × 16 × 16 × 4 bytes (float32)<br>
+                        <strong>Compressed</strong> = bytes of Uk + Sk + Vtk<br>
+                        The function returns both the reconstructed tensor and the exact byte counts.
+                    </li>
+                </ol>
+            
+                <div style="background:#ecfdf5; padding:22px; border-radius:12px; margin:25px 0;">
+                    <strong>Why SVD is perfect for this task</strong><br>
+                    • It is a mathematically optimal low-rank approximation (best possible compression for a given number of
+                    components).<br>
+                    • It works extremely well on feature maps from neural networks because they usually have a lot of
+                    redundancy.<br>
+                    • It is linear and very fast to compute (no training needed).<br>
+                    • On a satellite, you could even run a fast approximated SVD or use hardware-accelerated versions.
+                </div>
+            
+                <h3 style="color:#1e40af; margin-top:25px;">Visual Intuition of the Compression</h3>
+                <p>Think of the embedding matrix [512 × 256] as a photo that can be compressed by keeping only the 10% most
+                    important “colors” (singular vectors). The reconstructed version looks almost identical to the human eye (and to
+                    the decoder), but uses ~90% fewer numbers.</p>
+            
+                <p style="margin-top:25px; font-size:0.95rem; color:#475569;">
+                    <strong>Bottom line:</strong> With <code>k_ratio=0.1</code> we typically reduce the embedding size by 85–92%
+                    while losing only a tiny fraction of the final water IoU. This is exactly the trade-off we want for a real
+                    satellite downlink.
+                </p>
+            </div>
+
+           
+            <div class="function">
+                <div class="function-header">decoder_from_features(model, emb, conv1, conv2, conv3)</div>
+                
+                <pre
+                    style="background:#1e2937; color:#e0f2fe; padding:18px; border-radius:8px; font-size:0.95rem; overflow-x:auto;">
+            def decoder_from_features(model, emb, conv1, conv2, conv3):
+                x = F.interpolate(emb, scale_factor=2, mode='bilinear', align_corners=True)
+                x = torch.cat([x, conv3], dim=1)
+                x = model.dconv_up3(x)
+            
+                x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=True)
+                x = torch.cat([x, conv2], dim=1)
+                x = model.dconv_up2(x)
+            
+                x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=True)
+                x = torch.cat([x, conv1], dim=1)
+                x = model.dconv_up1(x)
+            
+                return model.conv_last(x)
+            </pre>
+            
+                <h3 style="color:#1e40af; margin-top:25px;">Important Clarification First</h3>
+                <p><strong>This function does NOT retrain the model.</strong><br>
+                    There is <strong>zero training</strong> happening here. The entire model (backbone + decoder) was already
+                    trained and is now <strong>frozen</strong>. This function only runs <strong>inference on the ground</strong>
+                    using the embedding sent from the satellite.</p>
+            
+                <h3 style="color:#1e40af; margin-top:25px;">What This Function Actually Does</h3>
+                <p>It manually reproduces the <strong>decoder part</strong> of the original UNet, exactly as the full model would do
+                    after the encoder finishes.</p>
+                <p>In the satellite-ground pipeline we simulate:</p>
+                <ul>
+                    <li><strong>Satellite</strong> → runs the frozen encoder → extracts the deep embedding (<code>emb</code>) →
+                        compresses it with SVD → downlinks only the compressed embedding.</li>
+                    <li><strong>Ground</strong> → receives the compressed <code>emb</code> → runs this
+                        <code>decoder_from_features</code> function to reconstruct the final segmentation map.</li>
+                </ul>
+            
+                <h3 style="color:#1e40af; margin-top:25px;">Step-by-Step Execution (with tensor shapes)</h3>
+                <ol style="font-size:1.05rem;">
+                    <li><strong>Start with the received embedding</strong><br>
+                        Input <code>emb</code> shape: <strong>[1, 512, 16, 16]</strong> (the bottleneck feature map from
+                        dconv_down4).
+                    </li>
+                    <li><strong>First upsampling + skip connection</strong><br>
+                        <code>F.interpolate(emb, scale_factor=2)</code> → becomes <strong>[1, 512, 32, 32]</strong><br>
+                        Concatenate with <code>conv3</code> ([1, 256, 32, 32]) → <strong>[1, 768, 32, 32]</strong><br>
+                        Pass through <code>model.dconv_up3</code> (a double-conv block) → <strong>[1, 256, 32, 32]</strong>
+                    </li>
+                    <li><strong>Second upsampling + skip connection</strong><br>
+                        Upsample → <strong>[1, 256, 64, 64]</strong><br>
+                        Concatenate with <code>conv2</code> ([1, 128, 64, 64]) → <strong>[1, 384, 64, 64]</strong><br>
+                        Pass through <code>model.dconv_up2</code> → <strong>[1, 128, 64, 64]</strong>
+                    </li>
+                    <li><strong>Third upsampling + skip connection</strong><br>
+                        Upsample → <strong>[1, 128, 128, 128]</strong><br>
+                        Concatenate with <code>conv1</code> ([1, 64, 128, 128]) → <strong>[1, 192, 128, 128]</strong><br>
+                        Pass through <code>model.dconv_up1</code> → <strong>[1, 64, 128, 128]</strong>
+                    </li>
+                    <li><strong>Final classification layer</strong><br>
+                        <code>model.conv_last(x)</code> → outputs <strong>[1, 2, 256, 256]</strong> (raw logits for cloud and
+                        water).
+                    </li>
+                </ol>
+            
+                <div style="background:#ecfdf5; padding:22px; border-radius:12px; margin:25px 0;">
+                    <strong>Why the skip connections (conv1, conv2, conv3) are needed</strong><br>
+                    The decoder uses these “shortcut” features from the encoder to recover fine spatial details (edges of rivers,
+                    small flooded areas). Without them the output would be blurry. By sending only the embedding from the satellite
+                    and re-using the same frozen backbone on the ground, we can recompute the exact same skip connections locally —
+                    no extra data needs to be transmitted.
+                </div>
+            
+                <h3 style="color:#1e40af; margin-top:25px;">How This Simulates the Real Satellite-to-Ground Pipeline</h3>
+                <p>In a real mission:</p>
+                <ul>
+                    <li>Satellite only needs to run the encoder (frozen) + SVD compression → very low power and memory.</li>
+                    <li>Only the small compressed embedding is downlinked (typically 85–92% smaller than the original image).</li>
+                    <li>Ground station runs <strong>only the decoder</strong> (this function) using the received embedding + locally
+                        recomputed skips.</li>
+                    <li>Result: almost identical water map as if the full model had run on the satellite, but with dramatically less
+                        data transmitted.</li>
+                </ul>
+            
+                <p style="margin-top:25px; font-size:0.95rem; color:#475569;">
+                    <strong>Summary:</strong> <code>decoder_from_features</code> is the <strong>ground-side reconstruction
+                        step</strong>. It takes the compressed embedding sent by the satellite and turns it back into a
+                    full-resolution flood map by replaying exactly the same decoder operations the original UNet would have used —
+                    no retraining involved.
+                </p>
+            </div>
+
+            <div class="function">
+                <div class="function-header">water_iou()</div>
+                <div style="padding: 25px;">
+                    Calculates Intersection over Union (IoU) for the water class, ignoring invalid pixels and cloudy
+                    predictions.
+                </div>
+            </div>
+
+            <!-- Workflow -->
+            <h2>🔄 Overall Workflow</h2>
+            <div class="card">
+                <ol>
+                    <li>Load and freeze the UNet model (simulating satellite hardware)</li>
+                    <li>Register hooks to capture intermediate features (embedding + skips)</li>
+                    <li>For each test image:
+                        <ul>
+                            <li>Preprocess and select best tile</li>
+                            <li>Run full forward pass to get original prediction and capture features</li>
+                            <li>Compress only the deep embedding using SVD</li>
+                            <li>Reconstruct prediction on "ground" using decoder_from_features()</li>
+                            <li>Compare IoU and calculate compression ratio</li>
+                        </ul>
+                    </li>
+                    <li>Generate summary statistics and two comparison plots</li>
+                </ol>
+            </div>
+
+            <!-- Results -->
+            <h2>📊 What We Measure</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Compression ratio:</strong> How much smaller the transmitted embedding is compared to
+                        the original 6-band image</li>
+                    <li><strong>IoU degradation:</strong> Difference in water detection accuracy between the full model
+                        and the compressed version</li>
+                    <li><strong>Trade-off:</strong> We aim for maximum data reduction with minimal loss in segmentation
+                        quality</li>
+                </ul>
+                <p>The plots show both the IoU comparison per image and the average size reduction achieved.</p>
+            </div>
+
+            
+
+        </div>
+    </div>
+</body>
+
+</html>

@@ -1,5 +1,5 @@
 # =============================================================
-# STEP 18 - Correct Evaluation with 2-channel Ground Truth
+# STEP 1 - Correct Evaluation with 2-channel Ground Truth
 # Objective: Properly read the ground truth from WorldFloodsv2
 # which has TWO separate channels:
 #   Channel 1 (band 1): Clouds  → {0:invalid, 1:clear, 2:cloud}
